@@ -4,38 +4,51 @@ import tensorflow as tf
 from pprint import pprint
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import ConvLSTM2D, BatchNormalization, Flatten, Dense
-
-
+from eval import evaluate_model
+import pickle
 import os
 
-files = []
-labels = []
+
+files_train = []
+labels_train = []
+files_eval = []
+labels_eval = []
+
+
+leave_out_subject = {'type': 'MCA', 'id': '0002'}
 
 for cls, cls_id in [('MCA', 1), ('TIA', 0)]:
     folder = os.path.join('data/landmarks', cls)
     for fn in os.listdir(folder):
         if fn.endswith('.h5'):
-            files.append(os.path.join(folder, fn))
-            labels.append(cls_id)
+            if cls == leave_out_subject['type'] and fn.startswith(leave_out_subject['id']):
+                files_eval.append(os.path.join(folder, fn))
+                labels_eval.append(cls_id)
+            else:
+                files_train.append(os.path.join(folder, fn))
+                labels_train.append(cls_id)
 
-files = np.array(files)
-leave_one_subject_out = True
+files_train = np.array(files_train)
+files_eval = np.array(files_eval)
 
-labels = np.array(labels, dtype=np.int32)
+labels_eval = np.array(labels_eval, dtype=np.int32)
+labels_train = np.array(labels_train, dtype=np.int32)
 
-raw_sequences = [h5py.File(fn)['pose_landmarks'] for fn in files ]
+pprint(f'Number of training files: {len(files_train)}')
+pprint(f'Number of evaluation files: {len(files_eval)}')
 
-print(f'Found {len(raw_sequences)} sequences with {len(files)} files.')
+raw_sequences_train = [h5py.File(fn)['pose_landmarks'] for fn in files_train ]
+raw_sequences_eval = [h5py.File(fn)['pose_landmarks'] for fn in files_eval ]
 
-window_size = 30
+window_size = 250
 X = []
 y = []
-for seq in raw_sequences:
+for seq in raw_sequences_train:
     n_frames, n_landmarks, n_coordinates = seq.shape
     n_windows = n_frames // window_size
     windowed_sequences = seq[:n_windows*window_size].reshape(n_windows, window_size, n_landmarks, n_coordinates)
     
-    y.append(np.full(n_windows, labels[0]))  #all frames in a sequence have the same label
+    y.append(np.full(n_windows, labels_train[0]))  #all frames in a sequence have the same label
     X.append(windowed_sequences)  
 
 X = np.concatenate(X, axis=0)
@@ -43,15 +56,25 @@ y = np.concatenate(y, axis=0)
 # 3. Add channel dim → (batch, time, H, W, 1)
 X = X[..., np.newaxis].astype('float32')
 
+X_eval = []
+y_eval = []
+
+for seq in raw_sequences_eval:
+    n_frames, n_landmarks, n_coordinates = seq.shape
+    n_windows = n_frames // window_size
+    windowed_sequences = seq[:n_windows*window_size].reshape(n_windows, window_size, n_landmarks, n_coordinates)
+    
+    y_eval.append(np.full(n_windows, labels_eval[0]))  #all frames in a sequence have the same label
+    X_eval.append(windowed_sequences)
+
+X_eval = np.concatenate(X_eval, axis=0)
+y_eval = np.concatenate(y_eval, axis=0)
+X_eval = X_eval[..., np.newaxis].astype('float32')
+
 pprint(f'X shape: {X.shape}, y shape: {y.shape}')
 
 # 4. One-hot your labels if needed
 num_classes = len(np.unique(y))
-
-# 5. Split train/test
-from sklearn.model_selection import train_test_split
-X_train, X_val, y_train, y_val = train_test_split(
-    X, y, test_size=0.2, random_state=42)
 
 # 6. Build the ConvLSTM2D model
 model = Sequential([
@@ -69,7 +92,7 @@ model = Sequential([
 ])
 
 model.compile(
-    loss='categorical_crossentropy',
+    loss='binary_crossentropy',
     optimizer='adam',
     metrics=['accuracy']
 )
@@ -78,11 +101,26 @@ model.summary()
 
 # 7. Train
 history = model.fit(
-    X_train, y_train,
-    validation_data=(X_val, y_val),
+    X, y,
+    validation_data=(X_eval, y_eval),
     epochs=20,
     batch_size=8
 )
 
 # 8. Save the model
-model.save('models/conv_lstm_model.keras')
+name = f'conv_lstm_model__leaveout_{leave_out_subject["type"]}_{leave_out_subject["id"]}'
+model.save(os.path.join('models', name + '.keras'))
+
+# save leavout subject sequence
+leave_out_subject_sequence = {
+    'type': leave_out_subject['type'],
+    'id': leave_out_subject['id'],
+    'sequence': raw_sequences_eval
+}
+
+with open(os.path.join('models', name + '.pkl'), 'wb') as f:
+    pickle.dump(leave_out_subject_sequence, f)
+
+# 9. Evaluate the model
+
+evaluate_model(model, X_eval, y_eval)
