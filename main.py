@@ -3,7 +3,7 @@ import numpy as np
 import tensorflow as tf
 from pprint import pprint
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import ConvLSTM2D, BatchNormalization, Flatten, Dense
+from tensorflow.keras.layers import ConvLSTM2D, BatchNormalization, Flatten, Dense, Dropout
 from eval import evaluate_model
 import pickle
 import os
@@ -15,13 +15,14 @@ files_eval = []
 labels_eval = []
 
 
-leave_out_subject = {'type': 'MCA', 'id': '0002'}
+leave_out_subjects = [{'type': 'MCA', 'id': '0002'}, 
+                     {'type': 'TIA', 'id': '0001'}] 
 
 for cls, cls_id in [('MCA', 1), ('TIA', 0)]:
     folder = os.path.join('data/landmarks', cls)
     for fn in os.listdir(folder):
         if fn.endswith('.h5'):
-            if cls == leave_out_subject['type'] and fn.startswith(leave_out_subject['id']):
+            if any(leave_out['type'] == cls and leave_out['id'] in fn for leave_out in leave_out_subjects):
                 files_eval.append(os.path.join(folder, fn))
                 labels_eval.append(cls_id)
             else:
@@ -43,29 +44,36 @@ raw_sequences_eval = [h5py.File(fn)['pose_landmarks'] for fn in files_eval ]
 window_size = 250
 X = []
 y = []
-for seq in raw_sequences_train:
+for seq, lbl in zip(raw_sequences_train, labels_train):
     n_frames, n_landmarks, n_coordinates = seq.shape
     n_windows = n_frames // window_size
-    windowed_sequences = seq[:n_windows*window_size].reshape(n_windows, window_size, n_landmarks, n_coordinates)
+    if n_windows == 0:
+        continue  # in case some file is shorter than window_size
     
-    y.append(np.full(n_windows, labels_train[0]))  #all frames in a sequence have the same label
-    X.append(windowed_sequences)  
+    # slice into non-overlapping windows
+    windowed = seq[: n_windows * window_size] \
+                   .reshape(n_windows, window_size, n_landmarks, n_coordinates)
+    
+    X.append(windowed)
+    y.append(np.full(n_windows, lbl, dtype=np.int32))
 
-X = np.concatenate(X, axis=0)
-y = np.concatenate(y, axis=0)
-# 3. Add channel dim → (batch, time, H, W, 1)
+X = np.concatenate(X, axis=0)       # shape = (total_windows, window_size, n_landmarks, n_coordinates)
+y = np.concatenate(y, axis=0)       # shape = (total_windows,)
 X = X[..., np.newaxis].astype('float32')
 
 X_eval = []
 y_eval = []
-
-for seq in raw_sequences_eval:
+for seq, lbl in zip(raw_sequences_eval, labels_eval):
     n_frames, n_landmarks, n_coordinates = seq.shape
     n_windows = n_frames // window_size
-    windowed_sequences = seq[:n_windows*window_size].reshape(n_windows, window_size, n_landmarks, n_coordinates)
+    if n_windows == 0:
+        continue
     
-    y_eval.append(np.full(n_windows, labels_eval[0]))  #all frames in a sequence have the same label
-    X_eval.append(windowed_sequences)
+    windowed = seq[: n_windows * window_size] \
+                   .reshape(n_windows, window_size, n_landmarks, n_coordinates)
+    
+    X_eval.append(windowed)
+    y_eval.append(np.full(n_windows, lbl, dtype=np.int32))
 
 X_eval = np.concatenate(X_eval, axis=0)
 y_eval = np.concatenate(y_eval, axis=0)
@@ -75,6 +83,8 @@ pprint(f'X shape: {X.shape}, y shape: {y.shape}')
 
 # 4. One-hot your labels if needed
 num_classes = len(np.unique(y))
+
+pprint(f'Number of classes: {num_classes}')
 
 # 6. Build the ConvLSTM2D model
 model = Sequential([
@@ -88,13 +98,18 @@ model = Sequential([
     BatchNormalization(),
     Flatten(),
     Dense(64, activation='relu'),
-    Dense(num_classes, activation='softmax')
+    Dropout(0.2),
+    Dense(1, activation='sigmoid')
 ])
 
 model.compile(
     loss='binary_crossentropy',
     optimizer='adam',
-    metrics=['accuracy']
+    metrics=[
+        'accuracy', 
+        tf.keras.metrics.Precision(name='precision'), 
+        tf.keras.metrics.Recall(name='recall')
+    ]
 )
 
 model.summary()
@@ -107,19 +122,22 @@ history = model.fit(
     batch_size=8
 )
 
+results = model.evaluate(X_eval, y_eval, verbose=1)
+results_dict = dict(zip(model.metrics_names, results))
+pprint(results_dict)
+
 # 8. Save the model
-name = f'conv_lstm_model__leaveout_{leave_out_subject["type"]}_{leave_out_subject["id"]}'
+leaveout_names = [f"{leave_out['type']}_{leave_out['id']}" for leave_out in leave_out_subjects]
+leaveout_names = '_'.join(leaveout_names)
+name = f'conv_lstm_model__leaveout_{leaveout_names}'
 model.save(os.path.join('models', name + '.keras'))
 
-# save leavout subject sequence
-leave_out_subject_sequence = {
-    'type': leave_out_subject['type'],
-    'id': leave_out_subject['id'],
-    'sequence': raw_sequences_eval
-}
 
-with open(os.path.join('models', name + '.pkl'), 'wb') as f:
-    pickle.dump(leave_out_subject_sequence, f)
+
+leave_out_file = os.path.join('models', name + '_eval.h5')
+with h5py.File(leave_out_file, 'w') as f:
+    f.create_dataset('pose_landmarks', data=X_eval)
+    f.attrs['labels'] = y_eval.tolist()
 
 # 9. Evaluate the model
 
