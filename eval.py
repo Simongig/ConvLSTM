@@ -17,11 +17,12 @@ def evaluate_model(model, X_eval, y_eval):
     y_eval = np.array(y_eval)
 
     # Evaluate the model
-    loss, accuracy = model.evaluate(X_eval, y_eval, verbose=1)
-    
-    print(f"Evaluation Loss: {loss}")
-    print(f"Evaluation Accuracy: {accuracy}")
+    loss, accuracy, precision, recall = model.evaluate(X_eval, y_eval, verbose=1)
 
+    print(f"Loss: {loss:.4f}")
+    print(f"Accuracy: {accuracy:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall: {recall:.4f}")
 
 if __name__ == "__main__":
     

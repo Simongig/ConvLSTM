@@ -19,7 +19,8 @@ leave_out_subjects = [{'type': 'MCA', 'id': '0002'},
                      {'type': 'TIA', 'id': '0001'}] 
 
 for cls, cls_id in [('MCA', 1), ('TIA', 0)]:
-    folder = os.path.join('data/landmarks', cls)
+    # folder = os.path.join('data/landmarks', cls)
+    folder = os.path.join('data/landmarks_processed/', cls)
     for fn in os.listdir(folder):
         if fn.endswith('.h5'):
             if any(leave_out['type'] == cls and leave_out['id'] in fn for leave_out in leave_out_subjects):
@@ -41,7 +42,7 @@ pprint(f'Number of evaluation files: {len(files_eval)}')
 raw_sequences_train = [h5py.File(fn)['pose_landmarks'] for fn in files_train ]
 raw_sequences_eval = [h5py.File(fn)['pose_landmarks'] for fn in files_eval ]
 
-window_size = 250
+window_size = 500
 X = []
 y = []
 for seq, lbl in zip(raw_sequences_train, labels_train):
@@ -98,7 +99,7 @@ model = Sequential([
     BatchNormalization(),
     Flatten(),
     Dense(64, activation='relu'),
-    Dropout(0.2),
+    Dropout(0.5),
     Dense(1, activation='sigmoid')
 ])
 

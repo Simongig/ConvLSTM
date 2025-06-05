@@ -24,15 +24,20 @@ def remove_landmarks():
     for fn in files:
         with h5py.File(fn, 'r+') as f:
             seq = f['pose_landmarks'][:]
-            print(f'Processing file: {fn}, shape: {seq.shape}')
             
             # Remove aall landmarks except for upper limb
-            new_seq = seq[:, 5:, :]
-            new_filename = os.path.join('data/processed', os.path.basename(fn))
+            new_seq = seq[:, 11:22, :]
+            fn = fn.replace('\\', '/')
+            type = fn.split('/')[-2]
+            new_folder = f'data/landmarks_processed/{type}'
+            if not os.path.exists(new_folder):
+                os.makedirs(new_folder)
+            new_filename = os.path.join(new_folder, os.path.basename(fn))
+            
+            print(f'Saving file: {new_filename}, shape: {seq.shape}')
 
-            print(f'Saving processed file: {new_filename}')
-            # with h5py.File(new_filename, 'w') as new_f:
-            #     new_f.create_dataset('pose_landmarks', data=new_seq)
+            with h5py.File(new_filename, 'w') as new_f:
+                new_f.create_dataset('pose_landmarks', data=new_seq)
 
 
 
