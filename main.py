@@ -15,7 +15,7 @@ import pandas as pd
 
 # settings
 config = {
-    "sample_size": 500,  # number of frames in each sample
+    "sample_size": 1500,  # number of frames in each sample
     "lstm1_units": 32,
     "conv_lstm_num_filters": 32,
     "dropout_rate": 0.4,
@@ -35,7 +35,15 @@ def createLSTMModel(input_shape, num_classes, lstm1_units=64, dropout_rate=0.2, 
         Input(shape=input_shape),
         LSTM(
             units=lstm1_units,
-            return_sequences=False),
+            return_sequences=True  
+        ),
+        # Optional: Weitere Normalisierung/Dropout zwischen den LSTM-Schichten
+        # BatchNormalization(),
+        LSTM(
+            units=lstm1_units // 2, # Oft reduziert man die Units in tieferen Schichten
+            return_sequences=False # Die letzte gibt nur das Endergebnis aus
+        ),
+        BatchNormalization(),
         Dropout(dropout_rate),
         Dense(units=16, activation='relu'),
         Dense(units=1, activation='sigmoid'),
@@ -58,11 +66,20 @@ def createConvLSTM(input_shape, num_classes, num_filters=32, dropout_rate=0.2, l
             filters=num_filters,
             kernel_size=(3, 3),
             padding='same',
-            return_sequences=False),
+            return_sequences=True  # Wichtig: Gibt die Sequenz an die nächste Schicht weiter
+        ),
+        BatchNormalization(),
+        ConvLSTM2D(
+            filters=num_filters * 2, # Oft erhöht man die Filter in tieferen Schichten
+            kernel_size=(3, 3),
+            padding='same',
+            return_sequences=False
+        ),
+        BatchNormalization(),
         Dropout(dropout_rate),
         Flatten(),
         Dense(16, activation='relu'),
-        Dense(1, activation='sigmoid')     
+        Dense(1, activation='sigmoid')
     ])
 
     optimizer = Adam(learning_rate=learning_rate)
@@ -141,18 +158,6 @@ def saveModelAndData(model, X_eval, y_eval, prefix="lstm_model"):
         f.create_dataset('pose_landmarks', data=X_eval)
         f.attrs['labels'] = y_eval.tolist()
 
-def appendResultsToDataFrame(results_dict, csv_path='results/experiment_log.csv'):
-    path = Path(csv_path)
-    path.parent.mkdir(exist_ok=True)
-    
-    # Konvertiere das Dictionary in ein DataFrame
-    df = pd.DataFrame([results_dict])
-    
-    # Schreibe in die CSV-Datei
-    # mode='a' zum Anhängen, header=not path.exists() schreibt den Header nur, wenn die Datei neu ist
-    df.to_csv(path, mode='a', header=not path.exists(), index=False)
-    print(f"Ergebnisse erfolgreich in {csv_path} geloggt.")
-
 
 def main():
     raw_sequences_train, raw_sequences_eval, labels_train, labels_eval  = loadAndSplitData(leave_out_subjects)
@@ -185,8 +190,6 @@ def main():
     
     saveModelAndData(lstm_model, X_eval_lstm, y_eval, prefix="compare_lstm_model")
     metrics_dict_lstm = evaluate_model(lstm_model, X_eval_lstm, y_eval)
-    appendResultsToDataFrame(metrics_dict_lstm)
-
     ### 2. ConvLSTM model ###
     X_conv_lstm = X.reshape(X.shape[0], X.shape[1], X.shape[2], X.shape[3], 1)  # Add channel dimension
     X_eval_conv_lstm = X_eval.reshape(X_eval.shape[0], X_eval.shape[1], X_eval.shape[2], X_eval.shape[3], 1)  # Add channel dimension
@@ -210,7 +213,6 @@ def main():
 
     saveModelAndData(conv_lstm_model, X_eval_conv_lstm, y_eval, prefix="compare_conv_lstm_model")
     metrics_dict_conv_lstm = evaluate_model(conv_lstm_model, X_eval_conv_lstm, y_eval)
-    appendResultsToDataFrame(metrics_dict_conv_lstm)
 
 if __name__ == '__main__':
     main()

@@ -4,3 +4,5 @@ h5py>=3.10.0
 scikit-learn==1.7.0
 scikeras
 pandas
+matplotlib
+seaborn
